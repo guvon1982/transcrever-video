@@ -1,0 +1,41 @@
+# Ambiente e cache do Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Segredos
+.env
+.env.*
+!.env.example
+
+# Modelos baixados (alguns GB) e saídas geradas
+models/
+saida/
+
+# Mídia: nunca versionar vídeos ou áudios (aulas têm direitos autorais e dados pessoais)
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.webm
+*.flv
+*.wmv
+*.mp3
+*.wav
+*.m4a
+*.aac
+*.flac
+*.ogg
+*.opus
+*.wma
+
+# Editor / sistema
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
