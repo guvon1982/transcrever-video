@@ -1,4 +1,5 @@
 import os
+import time
 import tkinter as tk
 from pathlib import Path
 
@@ -11,21 +12,40 @@ from transcrever_video.gui import App
 from transcrever_video.progress import Progress
 
 
-@pytest.fixture
-def app():
-    try:
-        root = tk.Tk()
-    except tk.TclError as error:
+@pytest.fixture(scope="session")
+def tk_root():
+    """Uma única janela Tk para a execução inteira dos testes.
+
+    Criar um Tk() por teste falhava ao acaso no CI do Windows ("Can't find a usable init.tcl",
+    ~6% por criação, em Python 3.12 e 3.13). Com uma só criação, e algumas tentativas, o
+    problema some.
+    """
+    root = None
+    error: tk.TclError | None = None
+    for _attempt in range(3):
+        try:
+            root = tk.Tk()
+            break
+        except tk.TclError as caught:
+            error = caught
+            time.sleep(1)
+    if root is None:
         if os.environ.get("REQUIRE_GUI"):
-            raise  # no CI, não abrir a janela é falha: "pular" esconderia a perda de cobertura
+            raise error  # no CI, não abrir a janela é falha, e não um teste "pulado"
         pytest.skip(f"sem ambiente gráfico: {error}")
     root.withdraw()
-    window = App(root)
+    yield root
+    root.destroy()
+
+
+@pytest.fixture
+def app(tk_root):
+    window = App(tk_root)
     yield window
     # Solta a variável do Tk ainda na thread principal: se ela fosse descartada por outra
     # thread (coleta de lixo), o Tk reclama "main thread is not in main loop".
     window.view_var = None
-    root.destroy()
+    window.destroy()  # cancela agendamentos e atalhos, para um teste não vazar para o seguinte
 
 
 def wait_for_worker(app: App) -> None:
@@ -81,6 +101,31 @@ def select(app: App, index: int) -> None:
 def edit(app: App, extra: str) -> None:
     app.text.insert("end", extra)
     app.update()  # processa o aviso <<Modified>>, que o Tk entrega na fila de eventos
+
+
+def test_destruir_o_app_nao_deixa_agendamentos_nem_atalhos_na_raiz(tk_root):
+    # Regressão: cancelar um agendamento da raiz pelo objeto errado fazia o Tkinter estourar
+    # "can't delete Tcl command" ao destruir a janela raiz.
+    def pendentes():
+        return set(tk_root.tk.splitlist(tk_root.tk.call("after", "info")))
+
+    antes = pendentes()
+    window = App(tk_root)
+    window._flash("aviso")  # agenda o aviso curto
+    window._finish()  # agenda a atualização de botões de 50 ms
+    assert pendentes() != antes  # o app agendou coisas na raiz
+    assert tk_root.bind("<Control-s>") != ""
+
+    window.destroy()
+
+    assert pendentes() == antes
+    assert tk_root.bind("<Control-s>") == ""
+    # Todo comando que a raiz acha que tem precisa existir de fato no Tcl; senão destruir a raiz
+    # estoura. (_tclCommands é interno do tkinter, mas é exatamente o que quebrava.)
+    fantasmas = [
+        name for name in tk_root._tclCommands or () if not tk_root.tk.call("info", "commands", name)
+    ]
+    assert fantasmas == []
 
 
 # ---- tela e lista ----

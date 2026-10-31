@@ -51,9 +51,23 @@ class App(ttk.Frame):
         self._chip_signature: list[tuple[str, str]] = []
         self._chip_layout_key: tuple = ()
         self._flash_job: str | None = None
+        self._poll_job: str | None = None
+        self._finish_job: str | None = None
         self._build()
         self.pack(fill="both", expand=True)
-        self.root.after(POLL_MS, self._poll)
+        self._poll_job = self.root.after(POLL_MS, self._poll)
+
+    def destroy(self) -> None:
+        """Desfaz o que o App deixou pendurado na janela raiz (agendamentos e o atalho Ctrl+S)."""
+        # Cancela pelo mesmo objeto que agendou: o Tkinter guarda os comandos de cada um.
+        if self._poll_job is not None:
+            self.root.after_cancel(self._poll_job)
+        for job in (self._flash_job, self._finish_job):
+            if job is not None:
+                self.after_cancel(job)
+        self._poll_job = self._flash_job = self._finish_job = None
+        self.root.unbind("<Control-s>")
+        super().destroy()
 
     # ---- construção da tela ----
 
@@ -448,7 +462,7 @@ class App(ttk.Frame):
                 self._handle(kind, payload)
         except queue.Empty:
             pass
-        self.root.after(POLL_MS, self._poll)
+        self._poll_job = self.root.after(POLL_MS, self._poll)
 
     def _handle(self, kind: str, payload) -> None:
         if kind == "status":
@@ -507,7 +521,7 @@ class App(ttk.Frame):
             text += " Revise o texto abaixo; os .txt e .srt estão ao lado dos originais."
         self.current_label.configure(text=text)
         # o fim da thread só é visto como "parada" depois desta mensagem
-        self.root.after(50, self._refresh_buttons)
+        self._finish_job = self.after(50, self._refresh_buttons)
 
 
 def _enable_sharp_text() -> None:
