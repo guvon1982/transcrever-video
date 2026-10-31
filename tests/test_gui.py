@@ -1,3 +1,4 @@
+import os
 import tkinter as tk
 from pathlib import Path
 
@@ -15,6 +16,8 @@ def app():
     try:
         root = tk.Tk()
     except tk.TclError as error:
+        if os.environ.get("REQUIRE_GUI"):
+            raise  # no CI, não abrir a janela é falha: "pular" esconderia a perda de cobertura
         pytest.skip(f"sem ambiente gráfico: {error}")
     root.withdraw()
     window = App(root)

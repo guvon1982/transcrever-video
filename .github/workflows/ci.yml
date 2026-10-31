@@ -1,0 +1,82 @@
+name: CI
+
+# Roda a cada push, a cada pull request e uma vez por semana (a auditoria de vulnerabilidades
+# pode ficar vermelha sem nenhum commit novo, quando alguém publica um CVE).
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+
+# Permissão mínima: o CI só lê o código.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  testes:
+    name: Testes (Python ${{ matrix.python }})
+    # A auditoria semanal não precisa repetir os testes.
+    if: github.event_name != 'schedule'
+    runs-on: windows-latest # o app é só para Windows e a janela (tkinter) precisa do desktop dele
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    env:
+      # No CI, não conseguir abrir a janela de teste é falha, e não "teste pulado".
+      REQUIRE_GUI: "1"
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Instalar dependências (sem as DLLs da NVIDIA)
+        shell: pwsh
+        run: |
+          # Os testes não usam GPU. As bibliotecas da NVIDIA têm ~1 GB e só atrasariam o CI.
+          $runtime = Get-Content requirements.txt | Where-Object { $_ -notmatch '^nvidia-' }
+          $dev = Get-Content requirements-dev.txt | Where-Object { $_ -notmatch '^-r ' }
+          ($runtime + $dev) | Set-Content ci-requirements.txt
+          python -m pip install -r ci-requirements.txt
+
+      - name: Lint (ruff)
+        run: python -m ruff check .
+
+      - name: Formatação (ruff)
+        run: python -m ruff format --check .
+
+      - name: Testes (pytest)
+        run: python -m pytest -q -rs
+
+  auditoria:
+    name: Auditoria de vulnerabilidades (pip-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Instalar dependências
+        # No Linux os pacotes da NVIDIA ficam de fora (têm marcador sys_platform == "win32").
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Procurar vulnerabilidades conhecidas nas dependências instaladas
+        run: python -m pip_audit

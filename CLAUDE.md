@@ -46,6 +46,12 @@ Se o pytest der `PermissionError` em `%TEMP%\pytest-of-<usuario>` (pasta antiga 
 - Nunca versionar: vídeos/áudios, transcrições, modelos, `.env`.
 - Manter Dependabot ligado; alerta de CVE é trabalho a fazer.
 - Instalar dependências só do PyPI, com o nome exato (`faster-whisper`).
+- **CI** (`.github/workflows/ci.yml`): a cada push/PR e toda segunda-feira. Job `testes` (windows-latest, Python 3.12 e 3.13): `ruff check`, `ruff format --check`, `pytest`; **sem** as DLLs da NVIDIA (~1 GB, os testes não usam GPU), então o CI nunca testa a GPU nem o modelo real. Job `auditoria` (ubuntu): `pip-audit` nas dependências instaladas; pode ficar vermelho sem commit novo quando sai um CVE.
+- `REQUIRE_GUI=1` (definido no CI): se o Tk não abrir, o teste de janela **falha** em vez de ser pulado. Localmente continua pulando, com o motivo. O teste da área de transferência pula se ela estiver indisponível.
+- Actions fixadas por **hash de commit** (com a versão no comentário). O Dependabot atualiza hash e versão juntos; não trocar para tag solta.
+- `.github/dependabot.yml`: semanal, `pip` e `github-actions`, `target-branch: develop`, e ignora `av >= 19` (ver decisões travadas). `SECURITY.md` descreve como reportar falhas.
+- Falta fazer nas configurações do GitHub (não dá para versionar): Dependabot security updates e relato privado de vulnerabilidades (`Settings → Advanced Security`), e regras de proteção para `main`/`develop` (`Settings → Rules`).
+- Para ver o resultado do CI sem abrir o navegador: `gh run list --branch <branch>` e `gh run view <id> --log-failed`.
 
 ## Git
 

@@ -24,6 +24,10 @@ Usa o [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (licença MIT)
 - O processamento é local.
 - Este repositório **nunca** deve conter vídeos, áudios, transcrições ou modelos: o `.gitignore` bloqueia esses arquivos.
 
+## Segurança
+
+Encontrou uma falha? Veja o [SECURITY.md](SECURITY.md) para reportar de forma privada.
+
 ## Licença
 
 [MIT](LICENSE).
