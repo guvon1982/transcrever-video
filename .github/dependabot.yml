@@ -1,0 +1,21 @@
+version: 2
+
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    ignore:
+      # O faster-whisper 1.2.1 chama av.open(metadata_errors=...), parâmetro que o av 19 removeu:
+      # com o av 19 toda transcrição falha. Remover esta regra quando o faster-whisper corrigir.
+      - dependency-name: "av"
+        versions: [">=19"]
+
+  # As actions do CI estão fixadas por hash de commit; o Dependabot atualiza hash e versão juntos.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
