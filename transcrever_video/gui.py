@@ -9,7 +9,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from . import engine
+from . import download, engine
 from .media import file_dialog_types, is_audio
 from .progress import Progress, describe
 
@@ -41,6 +41,8 @@ class App(ttk.Frame):
         self.loaded: engine.LoadedModel | None = None
         self.saved = 0
         self.failed = 0
+        self.download_audio = download.download_audio  # os testes trocam por um falso
+        self.download_folder = download.default_download_dir()
         # Estado do editor: o texto de cada arquivo, onde salvar e o que ficou sem salvar.
         self.buffers: dict[Path, str] = {}
         self.results: dict[Path, engine.TranscriptionResult] = {}
@@ -93,6 +95,17 @@ class App(ttk.Frame):
         self.add_button.grid(row=0, column=0, padx=(0, 8))
         self.clear_button = ttk.Button(buttons, text="Limpar lista", command=self.clear_files)
         self.clear_button.grid(row=0, column=1)
+
+        link = ttk.Frame(buttons)
+        link.grid(row=1, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        ttk.Label(link, text="Ou cole o link de um vídeo do YouTube:").grid(
+            row=0, column=0, columnspan=2, sticky="w"
+        )
+        self.url_entry = ttk.Entry(link, width=58)
+        self.url_entry.grid(row=1, column=0, padx=(0, 8), pady=(2, 0))
+        self.url_entry.bind("<Return>", lambda _event: self.add_link())
+        self.link_button = ttk.Button(link, text="Baixar áudio do link", command=self.add_link)
+        self.link_button.grid(row=1, column=1, pady=(2, 0))
 
         options = ttk.Frame(self)
         options.grid(row=3, column=0, sticky="w", pady=10)
@@ -169,6 +182,20 @@ class App(ttk.Frame):
         for path in paths:
             if path not in self.files:
                 self.files.append(path)
+        self._refresh_buttons()
+
+    def add_link(self) -> None:
+        """Baixa o áudio do link colado e põe o arquivo na lista, pronto para transcrever."""
+        if self.is_running:
+            return
+        try:
+            url = download.validate_url(self.url_entry.get())
+        except ValueError as error:
+            messagebox.showwarning("Link não aceito", str(error))
+            return
+        self.cancel_event.clear()
+        self.worker = threading.Thread(target=self._run_download, args=(url,), daemon=True)
+        self.worker.start()
         self._refresh_buttons()
 
     def clear_files(self) -> None:
@@ -407,6 +434,8 @@ class App(ttk.Frame):
         idle = "disabled" if running else "normal"
         self.add_button.configure(state=idle)
         self.clear_button.configure(state=idle)
+        self.url_entry.configure(state=idle)
+        self.link_button.configure(state=idle)
         self.language.configure(state="disabled" if running else "readonly")
         has_pending = any(path not in self.results for path in self.files)
         self.start_button.configure(state="normal" if has_pending and not running else "disabled")
@@ -452,6 +481,23 @@ class App(ttk.Frame):
             self._post("finished")
         except Exception as error:
             self._post("fatal", str(error))
+
+    def _run_download(self, url: str) -> None:
+        self._post("dl_start")
+        try:
+            audio = self.download_audio(
+                url,
+                self.download_folder,
+                on_progress=lambda progress: self._post("dl_progress", progress),
+                cancel=self.cancel_event,
+            )
+        except download.DownloadCancelled:
+            self._post("dl_cancelled")
+        except Exception as error:  # DownloadError já traz a mensagem pronta
+            self._post("dl_error", str(error))
+        else:
+            self._post("dl_done", audio)
+        self._post("dl_end")
 
     # ---- mensagens da thread -> janela ----
 
@@ -509,7 +555,38 @@ class App(ttk.Frame):
             self.current_label.configure(text="Erro. Veja a mensagem e tente de novo.")
         elif kind == "finished":
             self._finish()
+        elif kind.startswith("dl_"):
+            self._handle_download(kind, payload)
         self._refresh_buttons()
+
+    def _handle_download(self, kind: str, payload) -> None:
+        if kind == "dl_start":
+            self.current_label.configure(text="Baixando o áudio do link…")
+            self.progress_bar["value"] = 0
+            self.progress_label.configure(text="Conectando…")
+        elif kind == "dl_progress":
+            self.progress_bar["value"] = payload.fraction * 100
+            self.progress_label.configure(text=download.describe_download(payload))
+        elif kind == "dl_done":
+            self.progress_bar["value"] = 100
+            self.url_entry.configure(state="normal")
+            self.url_entry.delete(0, "end")
+            self.add_files([payload.path])
+            self._show(payload.path)
+            self.current_label.configure(
+                text=f"Áudio baixado: {payload.title}. Clique em Transcrever."
+            )
+            self.progress_label.configure(text=f"Salvo em: {payload.path.parent}")
+        elif kind == "dl_cancelled":
+            self.progress_label.configure(text="")
+            self.current_label.configure(text="Download cancelado.")
+        elif kind == "dl_error":
+            self.progress_label.configure(text="")
+            self.current_label.configure(text="Não foi possível baixar o áudio. Veja a mensagem.")
+            messagebox.showerror("Não foi possível baixar", payload)
+        elif kind == "dl_end":
+            # o fim da thread só é visto como "parada" depois desta mensagem
+            self._finish_job = self.after(50, self._refresh_buttons)
 
     def _finish(self) -> None:
         if self.cancel_event.is_set():
@@ -537,7 +614,7 @@ def main() -> None:
     root = tk.Tk()
     root.title("Transcrever Vídeo")
     root.geometry("860x800")
-    root.minsize(700, 660)
+    root.minsize(700, 700)
     app = App(root)
     root.protocol("WM_DELETE_WINDOW", app.on_close)
     root.mainloop()
