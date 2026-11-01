@@ -1,4 +1,5 @@
 import os
+import threading
 import time
 import tkinter as tk
 from pathlib import Path
@@ -7,6 +8,12 @@ import pytest
 
 from transcrever_video import gui
 from transcrever_video.cues import Cue, render_srt
+from transcrever_video.download import (
+    DownloadCancelled,
+    DownloadedAudio,
+    DownloadError,
+    DownloadProgress,
+)
 from transcrever_video.engine import LoadedModel, TranscriptionResult
 from transcrever_video.gui import App
 from transcrever_video.progress import Progress
@@ -556,3 +563,120 @@ def test_transcrever_de_novo_so_pega_os_arquivos_pendentes(app, monkeypatch, tmp
     assert primeiro in app.dirty
     select(app, 0)
     assert content(app).endswith("minha edição")
+
+
+# ---- link do YouTube ----
+
+
+def fake_downloader(tmp_path: Path, calls: list):
+    def download_audio(url, folder, *, on_progress, cancel):
+        calls.append((url, folder))
+        on_progress(DownloadProgress(50, 100, 5))
+        return DownloadedAudio(tmp_path / "Aula [abc].m4a", "Aula")
+
+    return download_audio
+
+
+def paste_link(app: App, text: str) -> None:
+    app.url_entry.delete(0, "end")
+    app.url_entry.insert(0, text)
+    app.add_link()
+
+
+def test_link_valido_baixa_o_audio_e_poe_na_fila(app, tmp_path):
+    calls: list = []
+    app.download_audio = fake_downloader(tmp_path, calls)
+
+    paste_link(app, "youtu.be/abc")
+    wait_for_worker(app)
+    drain(app)
+
+    assert calls == [("https://youtu.be/abc", app.download_folder)]
+    assert app.files == [tmp_path / "Aula [abc].m4a"]
+    assert app.listbox.get(0, "end") == ("Aula [abc].m4a",)
+    assert "Áudio baixado: Aula" in app.current_label["text"]
+    assert app.url_entry.get() == ""  # campo limpo para o próximo link
+    assert state(app.start_button) == "normal"  # pronto para transcrever
+
+
+def test_link_baixado_vai_para_a_mesma_fila_dos_arquivos(app, tmp_path):
+    app.download_audio = fake_downloader(tmp_path, [])
+    app.add_files([Path("C:/aulas/aula1.mp4")])
+
+    paste_link(app, "youtu.be/abc")
+    wait_for_worker(app)
+    drain(app)
+
+    assert [path.name for path in app.files] == ["aula1.mp4", "Aula [abc].m4a"]
+
+
+def test_barra_acompanha_o_download(app):
+    app._handle("dl_start", None)
+    assert "Baixando" in app.current_label["text"]
+    app._handle("dl_progress", DownloadProgress(50, 100, 5))
+    assert float(app.progress_bar["value"]) == 50.0
+    assert "50%" in app.progress_label["text"]
+
+
+def test_durante_o_download_os_controles_ficam_travados(app, tmp_path):
+    liberar = threading.Event()
+
+    def devagar(url, folder, *, on_progress, cancel):
+        liberar.wait(timeout=30)
+        return DownloadedAudio(tmp_path / "a.m4a", "A")
+
+    app.download_audio = devagar
+    paste_link(app, "youtu.be/abc")
+    try:
+        assert state(app.link_button) == "disabled"
+        assert state(app.url_entry) == "disabled"
+        assert state(app.add_button) == "disabled"
+        assert state(app.cancel_button) == "normal"  # dá para cancelar o download
+    finally:
+        liberar.set()
+        wait_for_worker(app)
+        drain(app)
+
+
+def test_link_nao_aceito_avisa_e_nao_baixa(app, monkeypatch):
+    avisos: list = []
+    monkeypatch.setattr(gui.messagebox, "showwarning", lambda *a: avisos.append(a))
+    app.download_audio = lambda *a, **k: pytest.fail("não devia baixar")
+
+    paste_link(app, "https://vimeo.com/123")
+
+    assert len(avisos) == 1 and "YouTube" in avisos[0][1]
+    assert app.worker is None
+    assert app.files == []
+
+
+def test_erro_de_download_mostra_mensagem_e_libera_a_tela(app, monkeypatch):
+    erros: list = []
+    monkeypatch.setattr(gui.messagebox, "showerror", lambda *a: erros.append(a))
+
+    def falha(url, folder, *, on_progress, cancel):
+        raise DownloadError("Vídeo indisponível")
+
+    app.download_audio = falha
+    paste_link(app, "youtu.be/abc")
+    wait_for_worker(app)
+    drain(app)
+
+    assert erros and "Vídeo indisponível" in erros[0][1]
+    assert app.files == []
+    assert state(app.link_button) == "normal"
+
+
+def test_cancelar_o_download_nao_mostra_erro(app, monkeypatch):
+    monkeypatch.setattr(gui.messagebox, "showerror", lambda *a: pytest.fail("não é erro"))
+
+    def cancelado(url, folder, *, on_progress, cancel):
+        raise DownloadCancelled
+
+    app.download_audio = cancelado
+    paste_link(app, "youtu.be/abc")
+    wait_for_worker(app)
+    drain(app)
+
+    assert app.current_label["text"] == "Download cancelado."
+    assert app.files == []

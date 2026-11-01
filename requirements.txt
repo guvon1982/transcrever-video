@@ -2,6 +2,9 @@ faster-whisper>=1.2.1,<2
 # faster-whisper 1.2.1 passa `metadata_errors` ao av.open(), parâmetro que o av 19 removeu.
 # Sem este limite o pip instala o av 19 e toda transcrição falha com TypeError.
 av>=11,<19
+# Baixa o áudio de links do YouTube. Os sites mudam e o yt-dlp quebra com frequência:
+# atualize com `pip install -U yt-dlp` se um link que funcionava parar de funcionar.
+yt-dlp[default]>=2026.10.26,<2027
 # DLLs da NVIDIA para rodar na GPU (Windows). Sem elas o app cai para o processador.
 nvidia-cublas-cu12; sys_platform == "win32"
 nvidia-cudnn-cu12==9.*; sys_platform == "win32"
