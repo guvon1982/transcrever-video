@@ -91,13 +91,19 @@ class App(ttk.Frame):
 
         buttons = ttk.Frame(self)
         buttons.grid(row=2, column=0, sticky="w")
-        self.add_button = ttk.Button(buttons, text="Adicionar arquivos…", command=self.choose_files)
+        # Os dois botões ficam num quadro só deles: se ficassem na mesma grade do campo de link,
+        # as colunas esticariam até a largura do campo e os botões se afastariam.
+        file_buttons = ttk.Frame(buttons)
+        file_buttons.grid(row=0, column=0, sticky="w")
+        self.add_button = ttk.Button(
+            file_buttons, text="Adicionar arquivos…", command=self.choose_files
+        )
         self.add_button.grid(row=0, column=0, padx=(0, 8))
-        self.clear_button = ttk.Button(buttons, text="Limpar lista", command=self.clear_files)
+        self.clear_button = ttk.Button(file_buttons, text="Limpar lista", command=self.clear_files)
         self.clear_button.grid(row=0, column=1)
 
         link = ttk.Frame(buttons)
-        link.grid(row=1, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        link.grid(row=1, column=0, sticky="w", pady=(10, 0))
         ttk.Label(link, text="Ou cole o link de um vídeo do YouTube:").grid(
             row=0, column=0, columnspan=2, sticky="w"
         )
@@ -176,13 +182,24 @@ class App(ttk.Frame):
         chosen = filedialog.askopenfilenames(
             title="Escolha vídeos ou áudios", filetypes=file_dialog_types()
         )
-        self.add_files([Path(name) for name in chosen])
+        added = self.add_files([Path(name) for name in chosen])
+        if len(added) == 1:
+            subject = f"O arquivo foi adicionado à lista:\n{added[0].name}"
+        elif added:
+            subject = f"{len(added)} arquivos foram adicionados à lista."
+        else:
+            return  # nada escolhido (janela fechada) ou tudo já estava na lista
+        messagebox.showinfo(
+            "Arquivos adicionados",
+            f"{subject}\n\nAgora clique no botão “Transcrever” para gerar o texto.",
+        )
 
-    def add_files(self, paths: list[Path]) -> None:
-        for path in paths:
-            if path not in self.files:
-                self.files.append(path)
+    def add_files(self, paths: list[Path]) -> list[Path]:
+        """Põe na lista o que ainda não estava nela e devolve só o que entrou agora."""
+        added = [path for path in dict.fromkeys(paths) if path not in self.files]
+        self.files.extend(added)
         self._refresh_buttons()
+        return added
 
     def add_link(self) -> None:
         """Baixa o áudio do link colado e põe o arquivo na lista, pronto para transcrever."""
@@ -577,6 +594,12 @@ class App(ttk.Frame):
                 text=f"Áudio baixado: {payload.title}. Clique em Transcrever."
             )
             self.progress_label.configure(text=f"Salvo em: {payload.path.parent}")
+            # Aviso em janela: o download pode demorar e o usuário estar olhando outra coisa.
+            messagebox.showinfo(
+                "Download concluído",
+                f"O áudio foi baixado:\n{payload.title}\n\n"
+                "Agora clique no botão “Transcrever” para gerar o texto.",
+            )
         elif kind == "dl_cancelled":
             self.progress_label.configure(text="")
             self.current_label.configure(text="Download cancelado.")
@@ -589,7 +612,8 @@ class App(ttk.Frame):
             self._finish_job = self.after(50, self._refresh_buttons)
 
     def _finish(self) -> None:
-        if self.cancel_event.is_set():
+        cancelled = self.cancel_event.is_set()
+        if cancelled:
             text = "Cancelado. O que já foi transcrito ficou salvo ao lado do arquivo original."
         else:
             text = f"Pronto: {self.saved} arquivo(s) transcrito(s)."
@@ -599,6 +623,22 @@ class App(ttk.Frame):
         self.current_label.configure(text=text)
         # o fim da thread só é visto como "parada" depois desta mensagem
         self._finish_job = self.after(50, self._refresh_buttons)
+        # Aviso em janela: uma aula longa leva minutos e o usuário pode estar em outra janela.
+        if cancelled:
+            messagebox.showinfo(
+                "Transcrição cancelada",
+                "A transcrição foi cancelada.\n\n"
+                "O que já foi transcrito ficou salvo ao lado do arquivo original.",
+            )
+        elif self.saved:  # se tudo falhou, as mensagens de erro já avisaram
+            extra = f"\n{self.failed} arquivo(s) com erro." if self.failed else ""
+            messagebox.showinfo(
+                "Transcrição concluída",
+                f"Pronto! {self.saved} arquivo(s) transcrito(s).{extra}\n\n"
+                "Revise o texto na tela: dá para editar, copiar e salvar. "
+                "Os arquivos .txt e .srt já estão salvos ao lado do original "
+                "(botão “Abrir pasta desta transcrição”).",
+            )
 
 
 def _enable_sharp_text() -> None:

@@ -45,6 +45,15 @@ def tk_root():
     root.destroy()
 
 
+@pytest.fixture(autouse=True)
+def avisos(monkeypatch):
+    """Grava os avisos em janela (showinfo) em vez de abri-los: um aviso de verdade travaria o
+    teste esperando um clique. Cada item é (título, mensagem)."""
+    mostrados: list[tuple[str, str]] = []
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a: mostrados.append(a))
+    return mostrados
+
+
 @pytest.fixture
 def app(tk_root):
     window = App(tk_root)
@@ -503,7 +512,7 @@ def fake_engine(monkeypatch, tmp_path, calls=None, fail=()):
     monkeypatch.setattr(gui.engine, "transcribe_file", fake_transcribe)
 
 
-def test_fluxo_completo_mostra_o_texto_na_janela(app, monkeypatch, tmp_path):
+def test_fluxo_completo_mostra_o_texto_na_janela(app, monkeypatch, tmp_path, avisos):
     media = tmp_path / "aula.mp4"
     media.write_bytes(b"x")
     fake_engine(monkeypatch, tmp_path)
@@ -519,9 +528,10 @@ def test_fluxo_completo_mostra_o_texto_na_janela(app, monkeypatch, tmp_path):
     assert content(app) == "Linha um. Linha dois."
     assert state(app.text) == "normal"
     assert state(app.open_button) == "normal"
+    assert [titulo for titulo, _ in avisos] == ["Transcrição concluída"]  # avisou ao terminar
 
 
-def test_erro_em_um_arquivo_nao_derruba_a_fila(app, monkeypatch, tmp_path):
+def test_erro_em_um_arquivo_nao_derruba_a_fila(app, monkeypatch, tmp_path, avisos):
     ruim, bom = tmp_path / "ruim.mp4", tmp_path / "bom.mp3"
     for path in (ruim, bom):
         path.write_bytes(b"x")
@@ -539,6 +549,7 @@ def test_erro_em_um_arquivo_nao_derruba_a_fila(app, monkeypatch, tmp_path):
     assert "1 com erro" in app.current_label["text"]
     assert app.listbox.get(1) == "✓ bom.mp3"
     assert app.listbox.get(0) == "ruim.mp4"  # continua pendente: dá para tentar de novo
+    assert "1 arquivo(s) com erro" in avisos[0][1]
 
 
 def test_transcrever_de_novo_so_pega_os_arquivos_pendentes(app, monkeypatch, tmp_path):
@@ -599,6 +610,44 @@ def test_link_valido_baixa_o_audio_e_poe_na_fila(app, tmp_path):
     assert state(app.start_button) == "normal"  # pronto para transcrever
 
 
+def test_botoes_de_arquivo_ficam_juntos_apesar_do_campo_de_link(app):
+    # Regressão: com os botões na mesma grade do campo de link (largo), as colunas esticavam
+    # e "Adicionar arquivos" e "Limpar lista" ficavam longe um do outro.
+    app.update_idletasks()
+    quadro = app.add_button.master
+    assert quadro is app.clear_button.master
+    soma = app.add_button.winfo_reqwidth() + app.clear_button.winfo_reqwidth()
+    assert quadro.winfo_reqwidth() <= soma + 20
+    assert quadro.winfo_reqwidth() < app.url_entry.master.winfo_reqwidth()
+
+
+def test_download_concluido_abre_aviso_dizendo_para_clicar_em_transcrever(
+    app, tmp_path, avisos, monkeypatch
+):
+    visto: dict = {}
+
+    def aviso(*args):
+        # o que a tela já mostra no instante em que o aviso abre
+        visto["arquivos"] = list(app.files)
+        visto["rotulo"] = app.current_label["text"]
+        avisos.append(args)
+
+    monkeypatch.setattr(gui.messagebox, "showinfo", aviso)
+    app.download_audio = fake_downloader(tmp_path, [])
+
+    paste_link(app, "youtu.be/abc")
+    wait_for_worker(app)
+    drain(app)
+
+    assert len(avisos) == 1
+    titulo, mensagem = avisos[0]
+    assert titulo == "Download concluído"
+    assert "Aula" in mensagem  # diz qual áudio acabou de baixar
+    assert "clique" in mensagem.lower() and "Transcrever" in mensagem
+    assert visto["arquivos"] == [tmp_path / "Aula [abc].m4a"]  # o arquivo já está na fila
+    assert "Áudio baixado" in visto["rotulo"]
+
+
 def test_link_baixado_vai_para_a_mesma_fila_dos_arquivos(app, tmp_path):
     app.download_audio = fake_downloader(tmp_path, [])
     app.add_files([Path("C:/aulas/aula1.mp4")])
@@ -650,7 +699,7 @@ def test_link_nao_aceito_avisa_e_nao_baixa(app, monkeypatch):
     assert app.files == []
 
 
-def test_erro_de_download_mostra_mensagem_e_libera_a_tela(app, monkeypatch):
+def test_erro_de_download_mostra_mensagem_e_libera_a_tela(app, monkeypatch, avisos):
     erros: list = []
     monkeypatch.setattr(gui.messagebox, "showerror", lambda *a: erros.append(a))
 
@@ -665,9 +714,10 @@ def test_erro_de_download_mostra_mensagem_e_libera_a_tela(app, monkeypatch):
     assert erros and "Vídeo indisponível" in erros[0][1]
     assert app.files == []
     assert state(app.link_button) == "normal"
+    assert avisos == []  # falhou: não há "download concluído" para avisar
 
 
-def test_cancelar_o_download_nao_mostra_erro(app, monkeypatch):
+def test_cancelar_o_download_nao_mostra_erro(app, monkeypatch, avisos):
     monkeypatch.setattr(gui.messagebox, "showerror", lambda *a: pytest.fail("não é erro"))
 
     def cancelado(url, folder, *, on_progress, cancel):
@@ -680,3 +730,96 @@ def test_cancelar_o_download_nao_mostra_erro(app, monkeypatch):
 
     assert app.current_label["text"] == "Download cancelado."
     assert app.files == []
+    assert avisos == []
+
+
+# ---- avisos em janela ----
+
+
+def escolher(monkeypatch, *names: str) -> None:
+    """Faz o seletor de arquivos devolver `names`, como se o usuário os tivesse escolhido."""
+    monkeypatch.setattr(gui.filedialog, "askopenfilenames", lambda **kwargs: names)
+
+
+def test_adicionar_um_arquivo_avisa_para_clicar_em_transcrever(app, avisos, monkeypatch):
+    escolher(monkeypatch, "C:/aulas/aula1.mp4")
+
+    app.choose_files()
+
+    assert app.files == [Path("C:/aulas/aula1.mp4")]
+    assert len(avisos) == 1
+    titulo, mensagem = avisos[0]
+    assert titulo == "Arquivos adicionados"
+    assert "aula1.mp4" in mensagem
+    assert "Transcrever" in mensagem
+
+
+def test_adicionar_varios_arquivos_avisa_a_quantidade(app, avisos, monkeypatch):
+    escolher(monkeypatch, "C:/aulas/a.mp4", "C:/aulas/b.mp3", "C:/aulas/c.wav")
+
+    app.choose_files()
+
+    assert len(avisos) == 1  # um aviso só, e não um por arquivo
+    assert "3 arquivos foram adicionados" in avisos[0][1]
+    assert "Transcrever" in avisos[0][1]
+
+
+def test_nao_avisa_se_nada_foi_escolhido_ou_se_ja_estava_na_lista(app, avisos, monkeypatch):
+    escolher(monkeypatch)  # janela de escolha fechada sem escolher nada
+    app.choose_files()
+    app.add_files([Path("C:/aulas/a.mp4")])
+    escolher(monkeypatch, "C:/aulas/a.mp4")  # o mesmo arquivo de novo
+    app.choose_files()
+
+    assert avisos == []
+    assert app.files == [Path("C:/aulas/a.mp4")]
+
+
+def test_add_files_devolve_so_o_que_entrou_agora(app, avisos):
+    assert app.add_files([Path("a.mp4"), Path("a.mp4"), Path("b.mp3")]) == [
+        Path("a.mp4"),
+        Path("b.mp3"),
+    ]
+    assert app.add_files([Path("a.mp4"), Path("c.wav")]) == [Path("c.wav")]
+    assert avisos == []  # o aviso é do seletor de arquivos; o download tem o dele
+
+
+def test_fim_da_transcricao_avisa_que_acabou_e_o_que_fazer(app, avisos):
+    app.saved, app.failed = 2, 0
+
+    app._handle("finished", None)
+
+    assert len(avisos) == 1
+    titulo, mensagem = avisos[0]
+    assert titulo == "Transcrição concluída"
+    assert "2 arquivo(s) transcrito(s)" in mensagem
+    assert "Revise" in mensagem and "Abrir pasta" in mensagem
+    assert "com erro" not in mensagem
+
+
+def test_fim_da_transcricao_com_erros_conta_os_que_falharam(app, avisos):
+    app.saved, app.failed = 1, 2
+
+    app._handle("finished", None)
+
+    assert "1 arquivo(s) transcrito(s)" in avisos[0][1]
+    assert "2 arquivo(s) com erro" in avisos[0][1]
+
+
+def test_fim_sem_nenhum_sucesso_nao_diz_que_esta_pronto(app, avisos):
+    app.saved, app.failed = 0, 2  # os erros já avisaram um a um
+
+    app._handle("finished", None)
+
+    assert avisos == []
+
+
+def test_cancelar_a_transcricao_avisa_que_o_feito_ficou_salvo(app, avisos):
+    app.saved, app.failed = 1, 0
+    app.cancel_event.set()
+
+    app._handle("finished", None)
+
+    assert len(avisos) == 1
+    assert avisos[0][0] == "Transcrição cancelada"
+    assert "ficou salvo" in avisos[0][1]
