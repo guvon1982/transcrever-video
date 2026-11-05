@@ -2,9 +2,16 @@
 
 Aplicativo simples para Windows que transcreve **vídeos e áudios** (aulas, palestras, reuniões) em texto, de graça e **local**: o arquivo não sai do seu computador (a internet só é usada se você colar um link).
 
-> **Status: em construção.** Ainda não há versão utilizável. Esta página será atualizada conforme o app ficar pronto.
+> **Status: funciona, em fase de testes.** O app já transcreve, mostra e edita o texto e gera `.txt` e `.srt`. Ainda não há versão numerada (release); o código mais recente fica na branch `develop`.
 
-## O que o app vai fazer
+## Como usar
+
+1. Instale o [Python 3.12 ou mais novo](https://www.python.org/downloads/) (marque "Add python.exe to PATH").
+2. Baixe este repositório (botão **Code → Download ZIP**) e extraia.
+3. Dê dois cliques em `instalar.bat` (só na primeira vez; baixa as dependências).
+4. Dê dois cliques em `iniciar.bat` para abrir o app.
+
+## O que o app faz
 
 - Transcrever vídeo (`mp4`, `mkv`, `avi`, `mov`, `webm`…) e áudio (`mp3`, `wav`, `m4a`, `flac`, `ogg`…).
 - Aceitar também o **link de um vídeo do YouTube**: o app baixa só o áudio (bem menor que o vídeo), guarda em `Documentos\Transcrever Vídeo` e põe na fila. Links de lista de reprodução, transmissão ao vivo e vídeos privados ou que exigem login não funcionam; outros sites (como o Vimeo, que exige login) ainda não são aceitos. Baixe o vídeo por conta própria e use "Adicionar arquivos".
