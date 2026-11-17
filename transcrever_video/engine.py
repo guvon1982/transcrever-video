@@ -14,6 +14,12 @@ from .subtitles import srt_block
 
 DEFAULT_MODEL = "large-v3-turbo"
 
+# Opções do Whisper iguais para arquivo comum e reunião.
+# condition_on_previous_text=False: sem isso, em áudios longos o modelo passa a imitar o
+# próprio texto anterior, começa a picotar (uma palavra por trecho), perde maiúsculas e
+# pontuação e chega a engolir frases. Medido num vídeo de 19,7 min: ver CLAUDE.md.
+WHISPER_OPTIONS = {"vad_filter": True, "beam_size": 5, "condition_on_previous_text": False}
+
 
 @dataclass(frozen=True)
 class LoadedModel:
@@ -116,16 +122,7 @@ def transcribe_file(
         raise FileNotFoundError(f"Arquivo não encontrado: {media}")
 
     start = clock()
-    # condition_on_previous_text=False: sem isso, em áudios longos o modelo passa a imitar o
-    # próprio texto anterior, começa a picotar (uma palavra por trecho), perde maiúsculas e
-    # pontuação e chega a engolir frases. Medido num vídeo de 19,7 min: ver CLAUDE.md.
-    segments, info = model.transcribe(
-        str(media),
-        language=language,
-        vad_filter=True,
-        beam_size=5,
-        condition_on_previous_text=False,
-    )
+    segments, info = model.transcribe(str(media), language=language, **WHISPER_OPTIONS)
     tracker = ProgressTracker(info.duration, clock)
     txt_path, srt_path = output_paths(media, output_dir)
     count = 0
